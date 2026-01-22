@@ -1,0 +1,96 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit, col
+import pandas as pd
+import re
+
+# Definer URL-ene
+urls = [
+    ("2025", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2025/dataset.csv"),
+    ("2024", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2024/dataset.csv"),
+    ("2023", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2023/dataset.csv"),
+    ("2022", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2022/dataset.csv"),
+    ("2021", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2021/dataset.csv"),
+    ("2020", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2020/dataset.csv"),
+    ("2019", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2019/dataset.csv"),
+    ("2017", "https://raw.githubusercontent.com/LandbruksdirektoratetGIT/opendata/refs/heads/main/datasets/produksjon-og-avlosertilskudd/2017/dataset.csv")
+]
+
+# Last inn dataene
+dataframes = []
+
+for year, url in urls:
+    print(f"Laster data for {year}...")
+    
+    # Last ned CSV med pandas
+    df_pandas = pd.read_csv(url, sep=';', encoding='UTF-8', low_memory=False)
+    
+    # Konverter til PySpark DataFrame
+    df_spark = spark.createDataFrame(df_pandas)
+    
+    # Legg til årstall-kolonne
+    df_spark = df_spark.withColumn("kilde_aar", lit(year))
+    
+    dataframes.append(df_spark)
+    print(f"  Lastet {df_spark.count()} rader")
+
+# Kombiner alle DataFrames
+combined_df = dataframes[0]
+for df in dataframes[1:]:
+    combined_df = combined_df.unionByName(df, allowMissingColumns=True)
+
+print(f"\nTotalt antall rader: {combined_df.count()}")
+
+# Funksjon for å rense kolonnenavn
+def clean_column_name(col_name):
+    """Fjerner spesialtegn og erstatter mellomrom med underscore"""
+    # Erstatt æ, ø, å med ae, o, a
+    col_name = col_name.replace('æ', 'ae').replace('ø', 'o').replace('å', 'a')
+    col_name = col_name.replace('Æ', 'Ae').replace('Ø', 'O').replace('Å', 'A')
+    # Fjern parenteser og andre spesialtegn
+    col_name = re.sub(r'[(),;{}()=\n\t]', '', col_name)
+    # Erstatt mellomrom og bindestreker med underscore
+    col_name = re.sub(r'[\s-]+', '_', col_name)
+    # Fjern flere underscores på rad
+    col_name = re.sub(r'_+', '_', col_name)
+    # Fjern underscore i starten/slutten
+    col_name = col_name.strip('_')
+    return col_name.lower()
+
+# Rens kolonnenavn og håndter duplikater
+print("\nRenser kolonnenavn og håndterer duplikater...")
+new_columns = []
+column_count = {}
+
+for old_col in combined_df.columns:
+    new_col = clean_column_name(old_col)
+    
+    # Håndter duplikater ved å legge til _1, _2, etc.
+    if new_col in column_count:
+        column_count[new_col] += 1
+        new_col = f"{new_col}_{column_count[new_col]}"
+    else:
+        column_count[new_col] = 0
+    
+    new_columns.append(new_col)
+    
+    if old_col != new_col:
+        print(f"Endret: '{old_col}' -> '{new_col}'")
+
+# Gi nytt navn til alle kolonner
+combined_df = combined_df.toDF(*new_columns)
+
+print("Kolonnenavn renset!")
+
+# Lagre som Delta-tabell
+print("\nLagrer som Delta-tabell...")
+combined_df.write.format("delta").mode("overwrite").saveAsTable("landbruk_produksjon_tilskudd")
+
+print("\n✅ FERDIG! Data lagret som Delta-tabell: landbruk_produksjon_tilskudd")
+print(f"Totalt {combined_df.count()} rader")
+
+# Vis et utvalg av dataene
+print("\nViser de første 5 radene:")
+spark.sql("SELECT * FROM landbruk_produksjon_tilskudd LIMIT 5").show(5, truncate=True)
+
+# Vis antall kolonner
+print(f"\nAntall kolonner: {len(combined_df.columns)}")
