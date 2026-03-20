@@ -1,0 +1,23 @@
+import os
+
+# List alle filer under Files
+for root, dirs, files in os.walk("/lakehouse/default/Files/"):
+    for file in files:
+        print(os.path.join(root, file))
+
+
+
+
+# Les filen - bytt ut 'filnavn.xlsx' med ditt filnavn
+df = pd.read_excel("/lakehouse/default/Files/data.xlsx")
+
+# Sjekk dataen
+display(df.head(10))
+print(f"Rader: {df.shape[0]}, Kolonner: {df.shape[1]}")
+print(df.dtypes)
+
+# Konverter til Spark DataFrame og lagre som Delta-tabell
+spark.createDataFrame(df).write \
+    .format("delta") \
+    .mode("overwrite") \
+    .saveAsTable("mitt_datasett")
